@@ -1,0 +1,7 @@
+build/
+builddir/
+*.bc
+*.columnar
+.cache/
+compile_commands.json
+columnar
