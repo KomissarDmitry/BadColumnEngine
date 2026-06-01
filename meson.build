@@ -1,47 +1,42 @@
-project('badcol_engine', 'cpp',
-  version : '228',
-  default_options : ['warning_level=3', 'cpp_std=c++20'])
+project('badcolumnar', 'cpp',
+  version : '1.0',
+  default_options : ['cpp_std=c++20', 'buildtype=release', 'warning_level=2'])
 
-core_src = [
+# Общие исходники движка (без main.cpp).
+engine_sources = files(
   'src/core/schema.cpp',
   'src/core/column.cpp',
-]
-
-io_src = [
   'src/io/csv.cpp',
-  'src/io/columnar_file.cpp',
   'src/io/columnar_store.cpp',
-]
-
-query_src = [
+  'src/io/columnar_file.cpp',
   'src/query/operators.cpp',
   'src/query/queries.cpp',
   'src/query/expr.cpp',
   'src/query/aggregation.cpp',
-]
-
-storage_src = [
   'src/storage/row_group.cpp',
-]
-
-compression_src = [
   'src/compression/codec.cpp',
   'src/compression/compression.cpp',
-]
+)
 
-lib_src = core_src + io_src + query_src + storage_src + compression_src
-columnar_lib = static_library('columnar_lib', lib_src)
+engine_inc = include_directories('src')
 
-main = executable('columnar',
+# Статическая библиотека движка.
+engine_lib = static_library('badcolumnar',
+  engine_sources,
+  include_directories : engine_inc)
+
+# Основной исполняемый файл.
+executable('columnar',
   'src/main.cpp',
-  link_with : columnar_lib,
-  install : true)
+  include_directories : engine_inc,
+  link_with : engine_lib,
+  install : false)
 
-gtest_dep = dependency('gtest', required : false)
-gtest_main_dep = dependency('gtest_main', main : true, required : false)
+# ---- Тесты (Google Test) ----
+gtest_dep = dependency('gtest', main : true, required : false)
 
-if gtest_dep.found() and gtest_main_dep.found()
-  test_src = [
+if gtest_dep.found()
+  test_files = [
     'tests/csv_test.cpp',
     'tests/schema_test.cpp',
     'tests/column_test.cpp',
@@ -50,11 +45,12 @@ if gtest_dep.found() and gtest_main_dep.found()
     'tests/compression_test.cpp',
     'tests/value_test.cpp',
   ]
-
-  tests = executable('tests',
-    test_src,
-    link_with : columnar_lib,
-    dependencies : [gtest_dep, gtest_main_dep])
-
-  test('all_tests', tests)
+  foreach tf : test_files
+    name = tf.split('/')[-1].split('.')[0]
+    exe = executable(name, tf,
+      include_directories : engine_inc,
+      link_with : engine_lib,
+      dependencies : gtest_dep)
+    test(name, exe)
+  endforeach
 endif

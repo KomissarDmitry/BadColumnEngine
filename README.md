@@ -1,5 +1,9 @@
 # BadColumnarEngine
 
+Учебный колоночный движок базы данных на C++20. Хранит данные в собственном
+бинарном формате с разбиением на блоки, сжатием и метаданными min/max,
+а запросы исполняет деревом операторов. Проходит все 43 запроса бенчмарка
+ClickBench.
 
 ## Структура проекта
 
@@ -38,32 +42,46 @@ bce/
 │   ├── aggregation_test.cpp
 │   ├── compression_test.cpp
 │   └── value_test.cpp
-├── meson.build
 ```
 
-## Сборка через Meson
+## Сборка
+
+Проект собирается напрямую через g++ (C++20), без сторонних систем сборки:
 
 ```bash
-# Установка
-pip3 install meson ninja
-# Настройка
+./script/setup.sh    # установка g++ через apt (нужен root или sudo)
+./script/build.sh    # сборка -> build/columnar
+```
+
+Можно собрать и вручную одной командой:
+
+```bash
+g++ -std=c++20 -O2 src/**/*.cpp src/main.cpp -o build/columnar
+```
+
+### Сборка через Meson (альтернатива)
+
+Для разработки и запуска тестов можно собрать проект через Meson:
+
+```bash
 meson setup builddir
-# Сборка
-meson compile -C builddir
-# Тесты (нужен gtest)
-meson test -C builddir
+meson compile -C builddir          # -> builddir/columnar
+meson test -C builddir             # юнит-тесты (нужен gtest)
 ```
 
 ## Использование
 
 ```bash
 # CSV -> колоночный формат
-./columnar convert data.csv schema.csv output.bc
-# Выполнить запрос ClickBench
-./columnar query output.bc 1
+./build/columnar convert data.csv schema.csv output.bc
+# Выполнить запрос ClickBench (0..42)
+./build/columnar query output.bc 1
 # Показать план запроса
-./columnar explain output.bc 1
+./build/columnar explain output.bc 1
 ```
+
+Схема задаётся текстовым файлом: по одной колонке на строку в формате
+`имя,тип`, где тип это `int64`, `float64` или `string`.
 
 ## Формат файла .bc (BadColumn)
 
@@ -82,3 +100,8 @@ meson test -C builddir
 [Длина footer: uint64]
 [MAGIC "BCE3": 4 байта]
 ```
+
+Данные бьются на горизонтальные блоки (Row Groups), внутри каждого хранятся
+поколоночно и сжимаются. Метаданные (смещения, статистика min/max) лежат в
+footer в конце файла. При чтении движок берёт с диска только нужные колонки и
+пропускает целые блоки по сохранённым min/max.

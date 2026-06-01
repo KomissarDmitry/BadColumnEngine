@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# Установка зависимостей сборки. Вызывается грейдером один раз.
-set -euo pipefail
+set -e
 
-if command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update -y || apt-get update -y || true
-    sudo apt-get install -y g++ python3-pip pkg-config libgtest-dev \
-        || apt-get install -y g++ python3-pip pkg-config libgtest-dev || true
-fi
+if command -v sudo >/dev/null 2>&1; then SUDO=sudo; else SUDO=; fi
 
-# meson + ninja через pip (надёжнее, чем системные пакеты).
-python3 -m pip install --user --upgrade meson ninja || pip3 install --user --upgrade meson ninja
+$SUDO apt-get update -qq
+$SUDO apt-get install -y --no-install-recommends g++ make
 
-echo "setup.sh: done"
+g++ --version >/dev/null 2>&1 || { echo "ERROR: g++ not available after setup" >&2; exit 1; }
