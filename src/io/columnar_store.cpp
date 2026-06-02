@@ -360,34 +360,22 @@ void ColumnStoreWriter::convert_csv(const std::string& data_csv,
                                     const std::string& out) {
     Schema schema = Schema::read_from_csv(schema_csv);
 
-    std::vector<std::unique_ptr<Column>> columns;
-    for (size_t i = 0; i < schema.column_count(); ++i)
-        columns.push_back(make_column(schema.column(i).type));
-
-    CsvReader reader(data_csv);
-    std::vector<std::string> row;
-    uint64_t total_rows = 0;
-    while (reader.read_row(row)) {
-        if (row.size() != schema.column_count())
-            throw std::runtime_error("Row has wrong number of fields: got " +
-                                     std::to_string(row.size()) + ", expected " +
-                                     std::to_string(schema.column_count()));
-        for (size_t i = 0; i < row.size(); ++i)
-            columns[i]->append_from_string(row[i]);
-        ++total_rows;
-    }
-
     std::ofstream file(out, std::ios::binary);
     if (!file) throw std::runtime_error("Cannot open file for writing: " + out);
     file.write(MAGIC_V3, 4);
 
     const uint64_t rpg = ROWS_PER_GROUP;
     std::vector<RowGroupMeta> groups;
+    uint64_t total_rows = 0;
 
-    for (uint64_t start = 0; start < total_rows || (total_rows == 0 && start == 0); start += rpg) {
-        uint64_t count = std::min<uint64_t>(rpg, total_rows - start);
+    std::vector<std::unique_ptr<Column>> columns;
+    for (size_t i = 0; i < schema.column_count(); ++i)
+        columns.push_back(make_column(schema.column(i).type));
+    uint64_t buffered = 0;
+
+    auto flush_group = [&]() {
         RowGroupMeta g;
-        g.num_rows = count;
+        g.num_rows = buffered;
 
         for (size_t c = 0; c < columns.size(); ++c) {
             ChunkMeta cm;
@@ -395,33 +383,52 @@ void ColumnStoreWriter::convert_csv(const std::string& data_csv,
 
             DataType t = schema.column(c).type;
             int64_t mn_i = 0, mx_i = 0;
-            if (count > 0 && t == DataType::Int64) {
+            if (buffered > 0 && t == DataType::Int64) {
                 const auto& d = static_cast<Int64Column*>(columns[c].get())->data();
                 mn_i = std::numeric_limits<int64_t>::max();
                 mx_i = std::numeric_limits<int64_t>::min();
-                for (uint64_t r = start; r < start + count; ++r) {
+                for (uint64_t r = 0; r < buffered; ++r) {
                     mn_i = std::min(mn_i, d[r]);
                     mx_i = std::max(mx_i, d[r]);
                 }
                 cm.has_stats = true; cm.min_i = mn_i; cm.max_i = mx_i;
-            } else if (count > 0 && t == DataType::Float64) {
+            } else if (buffered > 0 && t == DataType::Float64) {
                 const auto& d = static_cast<Float64Column*>(columns[c].get())->data();
                 double mn = std::numeric_limits<double>::infinity();
                 double mx = -std::numeric_limits<double>::infinity();
-                for (uint64_t r = start; r < start + count; ++r) {
+                for (uint64_t r = 0; r < buffered; ++r) {
                     mn = std::min(mn, d[r]);
                     mx = std::max(mx, d[r]);
                 }
                 cm.has_stats = true; cm.min_f = mn; cm.max_f = mx;
             }
 
-            encode_chunk(file, *columns[c], start, count, mn_i, mx_i);
+            encode_chunk(file, *columns[c], 0, buffered, mn_i, mx_i);
             cm.length = static_cast<uint64_t>(file.tellp()) - cm.offset;
             g.columns.push_back(cm);
         }
         groups.push_back(std::move(g));
-        if (total_rows == 0) break;
+
+        for (size_t i = 0; i < schema.column_count(); ++i)
+            columns[i] = make_column(schema.column(i).type);
+        buffered = 0;
+    };
+
+    CsvReader reader(data_csv);
+    std::vector<std::string> row;
+    while (reader.read_row(row)) {
+        if (row.size() != schema.column_count())
+            throw std::runtime_error("Row has wrong number of fields: got " +
+                                     std::to_string(row.size()) + ", expected " +
+                                     std::to_string(schema.column_count()));
+        for (size_t i = 0; i < row.size(); ++i)
+            columns[i]->append_from_string(row[i]);
+        ++buffered;
+        ++total_rows;
+        if (buffered == rpg) flush_group();
     }
+
+    if (buffered > 0 || total_rows == 0) flush_group();
 
     uint64_t footer_start = static_cast<uint64_t>(file.tellp());
 
